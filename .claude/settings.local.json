@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(lsof -ti:5173)",
+      "Bash(sips -s format png /tmp/app-icon.svg --out /tmp/app-icon-512.png --resampleWidth 512)",
+      "Bash(cp /tmp/app-icon.svg /Users/max/2026/glrobal_earth/public/icons/app-icon.svg)",
+      "Bash([ -f /tmp/app-icon-512.png ])",
+      "Bash(cp /tmp/app-icon-512.png /Users/max/2026/glrobal_earth/public/icons/icon-512.png)",
+      "Bash(sips -s format png /tmp/app-icon-512.png --out /Users/max/2026/glrobal_earth/public/icons/icon-192.png --resampleWidth 192)",
+      "Bash(npm run:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
