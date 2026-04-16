@@ -5,6 +5,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // Vite 설정 - Global Earth 날씨 PWA 앱
 export default defineConfig({
+  // Cloudflare Pages는 루트 배포이므로 base: '/'
+  base: '/',
   plugins: [
     react(),
     tailwindcss(),
