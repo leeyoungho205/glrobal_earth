@@ -27,6 +27,14 @@ const AppContent = () => {
   const { setSelectedLocation, setPointOfView, activeLayer } = useMapStore();
   const { location, isLoading: geoLoading } = useGeolocation();
 
+  // 앱 마운트 즉시 스플래시 숨기기 (지구본 로딩은 백그라운드에서 계속)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      (window as Window & { __hideSplash?: () => void }).__hideSplash?.();
+    }, 800);
+    return () => clearTimeout(timer);
+  }, []);
+
   // 현재 위치 감지 후 지구본 이동
   useEffect(() => {
     if (!geoLoading && location) {

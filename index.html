@@ -7,9 +7,72 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#3b82f6" />
     <title>Global Earth - 전지구 날씨</title>
+    <!-- DNS 프리커넥트: 날씨 API, 지도 타일 서버 -->
+    <link rel="preconnect" href="https://api.open-meteo.com" />
+    <link rel="preconnect" href="https://a.basemaps.cartocdn.com" />
+    <link rel="dns-prefetch" href="https://api.rainviewer.com" />
+    <link rel="dns-prefetch" href="https://gibs.earthdata.nasa.gov" />
+    <!-- 즉시 로딩 화면 스타일 (JS 로드 전에도 표시) -->
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; background: #0f172a; }
+      #splash {
+        position: fixed; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        background: radial-gradient(ellipse at center, #1e3a5f 0%, #0f172a 70%);
+        z-index: 9999;
+        transition: opacity 0.5s ease;
+      }
+      #splash.hidden { opacity: 0; pointer-events: none; }
+      .globe-spin {
+        width: 80px; height: 80px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 35%, #3b82f6, #1e3a8a 60%, #0f172a);
+        box-shadow: 0 0 40px rgba(59,130,246,0.5), inset -8px -8px 20px rgba(0,0,0,0.5);
+        animation: pulse 2s ease-in-out infinite;
+        margin-bottom: 24px;
+      }
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 40px rgba(59,130,246,0.5), inset -8px -8px 20px rgba(0,0,0,0.5); }
+        50% { transform: scale(1.05); box-shadow: 0 0 60px rgba(59,130,246,0.8), inset -8px -8px 20px rgba(0,0,0,0.5); }
+      }
+      .splash-title { color: #f1f5f9; font-size: 22px; font-weight: 700; font-family: system-ui, sans-serif; letter-spacing: -0.5px; margin-bottom: 8px; }
+      .splash-sub { color: #64748b; font-size: 13px; font-family: system-ui, sans-serif; margin-bottom: 32px; }
+      .progress-bar {
+        width: 180px; height: 3px;
+        background: #1e293b; border-radius: 99px; overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%; width: 0%;
+        background: linear-gradient(90deg, #3b82f6, #60a5fa);
+        border-radius: 99px;
+        animation: loading 2.5s ease-in-out forwards;
+      }
+      @keyframes loading {
+        0% { width: 0%; } 60% { width: 75%; } 85% { width: 88%; } 100% { width: 95%; }
+      }
+    </style>
   </head>
-  <body class="bg-slate-900 text-white overflow-hidden">
+  <body>
+    <!-- 즉시 표시되는 스플래시 화면 -->
+    <div id="splash">
+      <div class="globe-spin"></div>
+      <div class="splash-title">🌍 Global Earth</div>
+      <div class="splash-sub">전지구 날씨 시각화</div>
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // React 앱 마운트 완료 시 스플래시 숨기기
+      window.__hideSplash = function() {
+        const splash = document.getElementById('splash');
+        if (splash) {
+          splash.classList.add('hidden');
+          setTimeout(() => splash.remove(), 500);
+        }
+      };
+    </script>
   </body>
 </html>
