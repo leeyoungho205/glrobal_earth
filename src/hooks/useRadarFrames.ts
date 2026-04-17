@@ -1,13 +1,14 @@
-// RainViewer 레이더 프레임 관리 훅
+// RainViewer 레이더 + 위성 구름 프레임 관리 훅
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchRadarFrames, type RadarFrame } from '../services/radarApi';
+import { fetchRadarFrames, type RadarFrame, type SatelliteFrame } from '../services/radarApi';
 
 interface RadarState {
-  frames: RadarFrame[];         // 전체 프레임 목록
-  currentIndex: number;         // 현재 프레임 인덱스
-  host: string;                 // 타일 호스트 URL
-  isPlaying: boolean;           // 애니메이션 재생 중
+  frames: RadarFrame[];           // 레이더 전체 프레임 목록
+  currentIndex: number;           // 현재 레이더 프레임 인덱스
+  host: string;                   // 타일 호스트 URL
+  isPlaying: boolean;             // 애니메이션 재생 중
+  latestCloudFrame: SatelliteFrame | null; // 최신 구름(적외선) 프레임
 }
 
 export const useRadarFrames = () => {
@@ -16,9 +17,10 @@ export const useRadarFrames = () => {
     currentIndex: 0,
     host: '',
     isPlaying: false,
+    latestCloudFrame: null,
   });
 
-  // 5분마다 레이더 프레임 갱신
+  // 5분마다 레이더/구름 프레임 갱신
   const { data, isLoading, error } = useQuery({
     queryKey: ['radar-frames'],
     queryFn: fetchRadarFrames,
@@ -33,10 +35,19 @@ export const useRadarFrames = () => {
         ...data.radar.past,
         ...data.radar.nowcast.slice(0, 2), // 예측 2개 프레임만
       ];
+
+      // 가장 최신 적외선 구름 프레임 추출
+      const infraredFrames = data.satellite?.infrared ?? [];
+      const latestCloudFrame =
+        infraredFrames.length > 0
+          ? infraredFrames[infraredFrames.length - 1]
+          : null;
+
       setState(prev => ({
         ...prev,
         frames: allFrames,
         host: data.host,
+        latestCloudFrame,
         // 가장 최신 과거 프레임으로 초기화
         currentIndex: data.radar.past.length - 1,
       }));
@@ -83,6 +94,7 @@ export const useRadarFrames = () => {
     currentIndex: state.currentIndex,
     currentFrame,
     host: state.host,
+    latestCloudFrame: state.latestCloudFrame, // 구름 오버레이용
     isPlaying: state.isPlaying,
     isLoading,
     error: error?.message ?? null,
