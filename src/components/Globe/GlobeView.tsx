@@ -1,4 +1,4 @@
-// 3D 지구본 메인 컴포넌트 - CartoDB 라이트 지도 + 구름 오버레이 + 위성/레이더
+// 3D 지구본 메인 컴포넌트 - CartoDB 라이트 지도 + 구름/레이더 오버레이
 import { useRef, useCallback, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Globe from 'react-globe.gl';
 import type { GlobeInstance } from 'globe.gl';
@@ -8,29 +8,31 @@ import { useRadarFrames } from '../../hooks/useRadarFrames';
 import { getRadarTileUrl, getCloudTileUrl } from '../../services/radarApi';
 
 // ── CartoDB 라이트 테마 타일 ──────────────────────────────────────────────────
-// light_all: 밝은 지도 + 지역별 현지 언어 라벨 (한국→한국어, 미국→영어 등)
-// a~d 서브도메인 순환으로 CDN 병렬화
 const getCartoLightTileUrl = (x: number, y: number, level: number): string => {
-  const subdomains = ['a', 'b', 'c', 'd'];
-  const s = subdomains[(x + y) % 4];
+  const s = ['a', 'b', 'c', 'd'][(x + y) % 4];
   return `https://${s}.basemaps.cartocdn.com/light_all/${level}/${x}/${y}.png`;
 };
 
 // ── NASA GIBS 위성 타일 ──────────────────────────────────────────────────────
-// MODIS Terra 트루컬러 - 이틀 전 데이터 (GIBS 처리 지연 고려)
 const getSatelliteTileUrl = (x: number, y: number, level: number): string => {
   const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0];
   return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${twoDaysAgo}/GoogleMapsCompatible_Level9/${level}/${y}/${x}.jpg`;
 };
 
-interface MarkerData {
-  lat: number;
-  lng: number;
-}
+// Three.js 씬에서 이름으로 기존 메시 제거 + 메모리 해제
+const removeMeshFromScene = (scene: THREE.Scene, name: string) => {
+  const obj = scene.getObjectByName(name);
+  if (!obj) return;
+  scene.remove(obj);
+  if (obj instanceof THREE.Mesh) {
+    obj.geometry.dispose();
+    const mat = obj.material as THREE.MeshBasicMaterial;
+    mat.map?.dispose();
+    mat.dispose();
+  }
+};
 
-interface OverlayItem {
-  id: string;
-}
+interface MarkerData { lat: number; lng: number; }
 
 const GlobeView = forwardRef<GlobeInstance | undefined>((_, ref) => {
   const globeRef = useRef<GlobeInstance | undefined>(undefined);
@@ -39,12 +41,13 @@ const GlobeView = forwardRef<GlobeInstance | undefined>((_, ref) => {
     height: window.innerHeight,
   });
   const [tilesReady, setTilesReady] = useState(false);
+  // Globe 씬 준비 완료 여부 (직접 씬 조작 전 확인용)
+  const [sceneReady, setSceneReady] = useState(false);
 
   const { selectedLocation, setSelectedLocation, pointOfView, setPointOfView, activeLayer } =
     useMapStore();
   const { currentFrame, host, latestCloudFrame } = useRadarFrames();
 
-  // 외부 ref 노출
   useImperativeHandle(ref, () => globeRef.current);
 
   // 창 크기 감지
@@ -55,14 +58,19 @@ const GlobeView = forwardRef<GlobeInstance | undefined>((_, ref) => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // 초기 카메라 설정
+  // 초기 카메라 + Globe 씬 준비 신호
   useEffect(() => {
-    if (globeRef.current) {
-      globeRef.current.pointOfView(
-        { lat: pointOfView.lat, lng: pointOfView.lng, altitude: pointOfView.altitude },
-        0
-      );
-    }
+    // animateIn 완료 후 씬 조작 가능 (1초 대기)
+    const timer = setTimeout(() => {
+      if (globeRef.current) {
+        globeRef.current.pointOfView(
+          { lat: pointOfView.lat, lng: pointOfView.lng, altitude: pointOfView.altitude },
+          0
+        );
+        setSceneReady(true);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 레이어 전환 시 로딩 안내 초기화
@@ -87,93 +95,97 @@ const GlobeView = forwardRef<GlobeInstance | undefined>((_, ref) => {
     [setSelectedLocation, setPointOfView]
   );
 
-  // ── 레이어별 타일 설정 ────────────────────────────────────────────────────
   const isSatellite = activeLayer === 'satellite';
   const isRadar = activeLayer === 'radar';
-  const isBase = activeLayer === 'base';
 
   const tileEngineUrl = useMemo(() => {
     if (isSatellite) return getSatelliteTileUrl;
     return getCartoLightTileUrl;
   }, [isSatellite]);
 
-  // 선택 위치 마커
   const markerData: MarkerData[] = useMemo(
     () => (selectedLocation ? [{ lat: selectedLocation.lat, lng: selectedLocation.lng }] : []),
     [selectedLocation]
   );
 
-  // ── 오버레이 레이어 구성 ─────────────────────────────────────────────────────
-  // 위성 보기: 오버레이 없음 (NASA GIBS 이미 구름 포함)
-  // 지도 보기: 구름 오버레이
-  // 레이더 보기: 구름 + 레이더 오버레이
-  const customLayerData: OverlayItem[] = useMemo(() => {
-    const layers: OverlayItem[] = [];
-    // 지도/레이더에서 구름 추가 (데이터가 있을 때)
-    if ((isBase || isRadar) && latestCloudFrame && host) {
-      layers.push({ id: 'cloud' });
-    }
-    // 레이더 모드에서 레이더 추가
-    if (isRadar && currentFrame && host) {
-      layers.push({ id: 'radar' });
-    }
-    return layers;
-  }, [isBase, isRadar, latestCloudFrame, currentFrame, host]);
+  // ── 구름 오버레이: Three.js 씬에 직접 추가 ─────────────────────────────────
+  // customLayerData 방식 대신 scene()을 직접 조작 → 비동기 데이터 타이밍 문제 없음
+  useEffect(() => {
+    if (!sceneReady || !globeRef.current) return;
+    const scene = (globeRef.current as unknown as { scene: () => THREE.Scene }).scene?.();
+    if (!scene) return;
 
-  // ── Three.js 오버레이 오브젝트 생성 ─────────────────────────────────────────
-  // THREE.TextureLoader 사용 → CORS 캔버스 문제 없이 직접 WebGL 텍스처 로드
-  const createOverlayObject = useCallback((d: OverlayItem) => {
+    // 기존 구름 메시 제거
+    removeMeshFromScene(scene, 'cloud-overlay');
+
+    // 위성 모드이거나 데이터 없으면 구름 숨김
+    if (isSatellite || !latestCloudFrame || !host) return;
+
+    // zoom=0 → 전 세계 1장 이미지 (256px, 구름은 흐릿하므로 해상도 충분)
+    const cloudUrl = getCloudTileUrl(host, latestCloudFrame.path, 0, 0, 0);
     const loader = new THREE.TextureLoader();
-    loader.crossOrigin = 'anonymous';
+    const texture = loader.load(cloudUrl);
 
-    // ── 구름 오버레이 ──────────────────────────────────────────────────────
-    if (d.id === 'cloud' && latestCloudFrame && host) {
-      // zoom=0, x=0, y=0 → 전 세계를 1장의 이미지로 표현
-      // 해상도는 낮지만 구름 패턴은 충분히 보임 (구름 자체가 흐릿하기 때문)
-      const cloudUrl = getCloudTileUrl(host, latestCloudFrame.path, 0, 0, 0);
+    // Three.js 구체 UV는 경도 0°가 오른쪽 끝 → repeat.x=-1로 좌우 반전
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.repeat.set(-1, 1);
+    texture.offset.set(1, 0);
 
-      const geometry = new THREE.SphereGeometry(101.2, 64, 64);
-      const texture = loader.load(cloudUrl);
-      // 텍스처 좌우 반전 (Three.js 구체 UV 방향 맞춤)
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.repeat.set(-1, 1);
-      texture.offset.set(1, 0);
+    const geometry = new THREE.SphereGeometry(101.2, 64, 64);
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.75,
+      side: THREE.FrontSide,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = 'cloud-overlay';
+    scene.add(mesh);
 
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 0.75,
-        side: THREE.FrontSide,
-        depthWrite: false,
-        blending: THREE.NormalBlending,
-      });
-      return new THREE.Mesh(geometry, material);
-    }
+    return () => {
+      removeMeshFromScene(scene, 'cloud-overlay');
+    };
+  }, [sceneReady, isSatellite, latestCloudFrame, host]);
 
-    // ── 레이더 오버레이 ────────────────────────────────────────────────────
-    if (d.id === 'radar' && currentFrame && host) {
-      const geometry = new THREE.SphereGeometry(101.5, 64, 64);
-      const radarUrl = getRadarTileUrl(host, currentFrame.path, 2, 2, 1);
-      const texture = loader.load(radarUrl);
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 0.6,
-        side: THREE.FrontSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-      return new THREE.Mesh(geometry, material);
-    }
+  // ── 레이더 오버레이: Three.js 씬에 직접 추가 ───────────────────────────────
+  useEffect(() => {
+    if (!sceneReady || !globeRef.current) return;
+    const scene = (globeRef.current as unknown as { scene: () => THREE.Scene }).scene?.();
+    if (!scene) return;
 
-    return new THREE.Object3D();
-  }, [latestCloudFrame, currentFrame, host]);
+    removeMeshFromScene(scene, 'radar-overlay');
+
+    if (!isRadar || !currentFrame || !host) return;
+
+    const radarUrl = getRadarTileUrl(host, currentFrame.path, 2, 2, 1);
+    const loader = new THREE.TextureLoader();
+    const texture = loader.load(radarUrl);
+
+    const geometry = new THREE.SphereGeometry(101.5, 64, 64);
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.FrontSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = 'radar-overlay';
+    scene.add(mesh);
+
+    return () => {
+      removeMeshFromScene(scene, 'radar-overlay');
+    };
+  }, [sceneReady, isRadar, currentFrame, host]);
 
   const loadingLabel = isSatellite
     ? '🛰️ NASA 위성 이미지 로딩 중...'
     : isRadar
     ? '🌧️ 레이더 + 구름 로딩 중...'
-    : '☁️ 지도 + 구름 레이어 로딩 중...';
+    : '☁️ 구름 레이어 불러오는 중...';
 
   return (
     <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at center, #0d1b3e 0%, #050d1a 100%)' }}>
@@ -190,7 +202,6 @@ const GlobeView = forwardRef<GlobeInstance | undefined>((_, ref) => {
         atmosphereAltitude={0.18}
         onGlobeClick={handleGlobeClick}
         animateIn={true}
-        // 선택 위치 마커
         pointsData={markerData}
         pointLat="lat"
         pointLng="lng"
@@ -198,10 +209,6 @@ const GlobeView = forwardRef<GlobeInstance | undefined>((_, ref) => {
         pointAltitude={0.01}
         pointRadius={0.5}
         pointResolution={12}
-        // 구름 + 레이더 오버레이
-        customLayerData={customLayerData}
-        customThreeObject={createOverlayObject as (d: object) => THREE.Object3D}
-        customThreeObjectUpdate={() => {}}
       />
 
       {!tilesReady && (
