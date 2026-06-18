@@ -29,7 +29,7 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!assets|icons|favicon).*)",
+      "source": "/((?!assets|icons|favicon|refraction).*)",
       "destination": "/index.html"
     }
   ]
